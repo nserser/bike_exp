@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_sweep_r89_d9_t2_k64"
+seed = 20260512
+
+[parameters]
+r = 89
+d = 9
+t = 2
+key_mode = "sampled_keys"
+key_count = 64
+schedules = [[7, 6, 5, 4], [6, 6, 5, 4], [6, 5, 4, 4], [5, 5, 4, 3], [7, 7, 6, 5], [5, 4, 4, 3]]
+wrong_zero_is_failure = true
+exact_errors = true
+error_sample_count = 15753
+divergence_flip_threshold = 36
+divergence_residual_threshold = 36
+preferred_mean_min = 0.02
+preferred_mean_max = 0.5
+acceptable_mean_min = 0.005
+acceptable_mean_max = 0.7

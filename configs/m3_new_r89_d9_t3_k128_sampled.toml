@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_new_r89_d9_t3_k128_sampled"
+seed = 20260512
+
+[parameters]
+r = 89
+d = 9
+t = 3
+key_mode = "sampled_keys"
+key_count = 128
+thresholds = [6, 5, 5, 4, 3]
+wrong_zero_is_failure = true
+exact_errors = false
+error_sample_count = 10000
+divergence_flip_threshold = 36
+divergence_residual_threshold = 36
+baseline_bin_budget = 8
+quantile_bin_count = 4
+top_fraction = 0.10
+notes = "Sampled larger-t stress run. Threshold schedule fixed to the sweep-selected non-saturated setting from the missing-size calibration run. Exact |E_3| = C(178,3) = 923176, so this config samples 10000 errors/key."

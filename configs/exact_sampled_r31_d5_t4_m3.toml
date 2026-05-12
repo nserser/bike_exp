@@ -1,0 +1,42 @@
+[run]
+run_id = "exact_sampled_r31_d5_t4_m3"
+seed = 20260510
+mode = "stratified_keys"
+output_dir = "artifacts/exact_sampled_r31_d5_t4_m3"
+
+[parameters]
+r = 31
+d = 5
+t = 4
+
+[decoder]
+iterations = 6
+thresholds = [3, 3, 3, 3, 3, 3]
+wrong_zero_is_failure = true
+flip_policy = "all_ge_threshold"
+
+[profile]
+u_values = [1, 2, 3, 4]
+gathering_m_max = 3
+gathering_l_max = 3
+fixedpoint_m_max = 3
+fixedpoint_thresholds = [3, 4]
+
+[state]
+models = ["M3"]
+u_bins = [0, 1, 2, 3, 4, 99]
+omega_bins = [0, 1, 2, 4, 8, 16, 99]
+strict_absorbing = false
+
+[binning]
+bin_budgets = [8, 16, 32, 64, 128]
+quantile_ties = "stable"
+
+[sampling]
+key_count = 8
+error_sample_count = 0
+train_fraction = 0.7
+
+[metrics]
+q_values = [1, 10, 100, 1000]
+top_tail_fractions = [0.01, 0.05, 0.10]

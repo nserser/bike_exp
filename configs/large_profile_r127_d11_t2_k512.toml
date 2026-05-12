@@ -1,0 +1,42 @@
+[run]
+run_id = "large_profile_r127_d11_t2_k512"
+seed = 20260512
+mode = "sampled_keys"
+output_dir = "artifacts/large_profile_r127_d11_t2_k512"
+
+[parameters]
+r = 127
+d = 11
+t = 2
+
+[decoder]
+iterations = 4
+thresholds = [8, 7, 6, 5]
+wrong_zero_is_failure = true
+flip_policy = "all_ge_threshold"
+
+[profile]
+u_values = [1, 2, 3, 4]
+gathering_m_max = 2
+gathering_l_max = 4
+fixedpoint_m_max = 2
+fixedpoint_thresholds = [5, 6, 7, 8]
+
+[state]
+models = ["M0", "M1", "M2", "M3"]
+u_bins = [0, 1, 2, 3, 4, 99]
+omega_bins = [0, 1, 2, 4, 8, 16, 32, 99]
+strict_absorbing = false
+
+[binning]
+bin_budgets = [8, 16, 32, 64, 128]
+quantile_ties = "stable"
+
+[sampling]
+key_count = 512
+error_sample_count = 0
+train_fraction = 0.7
+
+[metrics]
+q_values = [1, 10, 100, 1000]
+top_tail_fractions = [0.01, 0.05, 0.10]

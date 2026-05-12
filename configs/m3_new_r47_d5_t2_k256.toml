@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_new_r47_d5_t2_k256"
+seed = 20260511
+
+[parameters]
+r = 47
+d = 5
+t = 2
+key_mode = "sampled_keys"
+key_count = 256
+thresholds = [4, 3, 3, 3]
+wrong_zero_is_failure = true
+exact_errors = true
+error_sample_count = 4371
+divergence_flip_threshold = 24
+divergence_residual_threshold = 24
+baseline_bin_budget = 8
+quantile_bin_count = 4
+top_fraction = 0.10
+notes = "Experiment C uses the threshold schedule selected by configs/m3_sweep_r47_d5_t2_k64.toml."

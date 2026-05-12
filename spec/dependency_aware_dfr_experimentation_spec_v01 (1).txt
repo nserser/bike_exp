@@ -1,0 +1,1385 @@
+DETAILED IMPLEMENTATION SPECIFICATION
+Dependency-Aware DFR Bounds: Reduced-Parameter Experimentation
+Version: v01
+Date: 2026-05-09
+Target reader: Codex / implementation agent
+Output type: deterministic Dockerized experiment artifact
+
+================================================================================
+0. PURPOSE
+================================================================================
+
+Implement a complete reduced-parameter experimentation framework for the paper
+"Dependency-Aware Failure Bounds for QC-MDPC Bit-Flipping Decoders".
+
+The implementation must demonstrate, on finite reduced QC-MDPC domains, that the
+proposed dependency-aware profile framework:
+
+  1. produces valid non-vacuous upper bounds on key-conditioned failure
+     probabilities p_H;
+  2. separates high-failure keys better than simpler diagnostics;
+  3. yields sharper profile-tail and repeated-use static-key diagnostics than
+     average-only or simpler profile models;
+  4. is fully reproducible from deterministic Docker commands and recorded
+     configuration files.
+
+This implementation is not intended to prove production-parameter BIKE DFR. The
+artifact is a reduced-parameter certification and diagnostic framework.
+
+================================================================================
+1. CLAIMS THE IMPLEMENTATION MUST SUPPORT
+================================================================================
+
+The implementation must support the following experimentally checkable claims.
+
+Claim A: Exact finite-domain certification.
+For selected toy parameter sets, the implementation enumerates all keys and all
+constant-weight errors, computes exact p_H for every key, and computes exact key
+profile masses. This gives an exact reduced-domain distribution of p_H.
+
+Claim B: Non-vacuous profile-class bounds.
+For the same exact domains, the implementation constructs profile-class upper
+bounds p_phi^+ and verifies that p_H <= p_{kappa(H)}^+ for every certified key.
+The bounds are non-vacuous when most p_phi^+ are strictly less than 1 and when
+reported looseness is finite and meaningfully below the trivial bound.
+
+Claim C: Dependency-aware separation.
+The full profile model M3 must be compared against simpler diagnostics M0, M1,
+and M2. The comparison must measure coverage, looseness, tail-curve quality,
+rank correlation with exact p_H, and recall of high-p_H keys.
+
+Claim D: Finite-state upper-process instantiation.
+For each profile bin, iteration, and compressed residual state, the implementation
+constructs miss/false count envelopes Q_i^+(phi,x;m,l) from enumerated decoder
+trajectories and propagates a non-normalized upper process to obtain a certified
+finite-state upper bound p_{phi,FS}^+.
+
+Claim E: Diagnostic larger reduced instances.
+For r=31,d=5,t=4 and selected additional parameter sets, the implementation
+samples or stratifies keys, enumerates or samples errors as configured, and
+reports diagnostic generalization results. These larger runs must be clearly
+labeled as sampled-set certificates or diagnostics, not full-keyspace proofs.
+
+================================================================================
+2. SINGLE CHOSEN IMPLEMENTATION ROUTE
+================================================================================
+
+Use a Rust computational core with a Python plotting/report layer.
+
+Rationale:
+  - Rust provides deterministic high-speed exhaustive enumeration of keys and
+    errors.
+  - Rust can implement compact fixed-size bitsets without Python-object overhead.
+  - Python is used only for post-processing CSV/JSON outputs into plots and
+    summary tables.
+  - All build and run commands must be Docker-based.
+
+Do not implement alternate engines in Python, C++, or Sage. The single engine is
+Rust. Python scripts are allowed only for plotting and final report generation.
+
+================================================================================
+3. REQUIRED REPOSITORY LAYOUT
+================================================================================
+
+The implementation package must have this layout:
+
+  /Dockerfile
+  /build.sh
+  /README.md
+  /Cargo.toml
+  /Cargo.lock
+  /src/main.rs
+  /src/bitset.rs
+  /src/combinatorics.rs
+  /src/key.rs
+  /src/profile.rs
+  /src/decoder.rs
+  /src/state.rs
+  /src/enumerate.rs
+  /src/certify.rs
+  /src/metrics.rs
+  /src/io.rs
+  /src/binning.rs
+  /src/rare_event.rs
+  /configs/exact_toy_r11_d3_t2.toml
+  /configs/exact_toy_r11_d3_t3.toml
+  /configs/exact_toy_r13_d3_t2.toml
+  /configs/sampled_r31_d5_t4.toml
+  /configs/rare_event_r31_d5_t4.toml
+  /scripts/plot_tail_curves.py
+  /scripts/plot_scatter_scores.py
+  /scripts/make_summary_tables.py
+  /scripts/make_report.py
+  /tests/README.md
+  /GAP.md
+
+The implementation must create the following output directory structure:
+
+  /artifacts/<run_id>/manifest.json
+  /artifacts/<run_id>/configs/config.resolved.toml
+  /artifacts/<run_id>/csv/keys.csv
+  /artifacts/<run_id>/csv/profiles.csv
+  /artifacts/<run_id>/csv/ph_exact.csv
+  /artifacts/<run_id>/csv/bins.csv
+  /artifacts/<run_id>/csv/bin_bounds.csv
+  /artifacts/<run_id>/csv/fs_bounds.csv
+  /artifacts/<run_id>/csv/tail_curves.csv
+  /artifacts/<run_id>/csv/metrics.csv
+  /artifacts/<run_id>/csv/ablation.csv
+  /artifacts/<run_id>/csv/top_tail_recall.csv
+  /artifacts/<run_id>/json/state_counts.jsonl
+  /artifacts/<run_id>/json/transition_envelopes.jsonl
+  /artifacts/<run_id>/json/rare_event.jsonl
+  /artifacts/<run_id>/plots/tail_curves.pdf
+  /artifacts/<run_id>/plots/scatter_scores.pdf
+  /artifacts/<run_id>/plots/looseness_boxplot.pdf
+  /artifacts/<run_id>/report.md
+
+================================================================================
+4. DOCKER REQUIREMENTS
+================================================================================
+
+4.1 Dockerfile
+
+The Dockerfile must:
+  - use a stable Rust base image, e.g. rust:1.78 or newer;
+  - install Python 3 and pip;
+  - install Python packages: pandas, numpy, matplotlib, scipy, tomli or tomllib
+    support, and pyarrow if parquet export is enabled;
+  - build the Rust binary in release mode;
+  - set the working directory to /work;
+  - expose the binary as /usr/local/bin/dfrcert.
+
+4.2 build.sh
+
+Root-level build.sh must:
+  - be executable;
+  - build the Docker image;
+  - export IMAGE_TAG=dependency-aware-dfrcert:v01;
+  - print Docker-only execution examples.
+
+Suggested build.sh behavior:
+
+  #!/usr/bin/env bash
+  set -euo pipefail
+  export IMAGE_TAG=dependency-aware-dfrcert:v01
+  docker build -t "$IMAGE_TAG" .
+  echo "Built $IMAGE_TAG"
+  echo "Run example:"
+  echo 'docker run --rm -v "$PWD/artifacts:/work/artifacts" "$IMAGE_TAG" dfrcert run --config configs/exact_toy_r11_d3_t3.toml --out artifacts/exact_toy_r11_d3_t3'
+
+4.3 Docker-only execution commands
+
+All user-facing commands in README.md and report.md must use Docker. Do not
+provide host-native cargo or python commands as the primary path.
+
+Example commands:
+
+  ./build.sh
+
+  docker run --rm \
+    -v "$PWD/artifacts:/work/artifacts" \
+    dependency-aware-dfrcert:v01 \
+    dfrcert run --config configs/exact_toy_r11_d3_t3.toml \
+    --out artifacts/exact_toy_r11_d3_t3
+
+  docker run --rm \
+    -v "$PWD/artifacts:/work/artifacts" \
+    dependency-aware-dfrcert:v01 \
+    python3 scripts/make_report.py \
+    --run artifacts/exact_toy_r11_d3_t3
+
+================================================================================
+5. MATHEMATICAL OBJECTS TO IMPLEMENT
+================================================================================
+
+5.1 Key space
+
+A two-block QC-MDPC key is H=(h0,h1), where h0 and h1 are d-subsets of Z_r.
+The implementation represents h0 and h1 as sorted Vec<u16>.
+
+For experiments, use the default reduced keyspace:
+  - h0 and h1 are independent d-subsets of {0,...,r-1};
+  - no production BIKE key filter is applied unless explicitly configured;
+  - r is odd in all supplied configs;
+  - keys are identified by key_id and by canonical support strings.
+
+5.2 Positions and columns
+
+The set of bit positions is J = {0,1} x Z_r. Encode position j=(a,z) as:
+
+  j = a*r + z,  where a in {0,1}, z in {0,...,r-1}.
+
+The column neighborhood Gamma_H(a,z) is:
+
+  Gamma_H(a,z) = Supp(h_a) + z mod r.
+
+The syndrome space has r check positions. The implementation uses a fixed-size
+bitset for syndrome support.
+
+5.3 Error space
+
+For a configured error weight t, enumerate or sample errors e as t-subsets of
+{0,...,2r-1}. The default theorem-grade experiments enumerate all t-subsets.
+
+5.4 Syndrome computation
+
+For an error support E, compute syndrome support as XOR of the column masks:
+
+  s_H(E) = XOR_{j in E} column_mask[j].
+
+5.5 Deterministic threshold bit-flipping decoder
+
+The decoder is configured by:
+  - iteration bound I;
+  - threshold schedule T[0..I-1];
+  - flip policy: flip all positions j whose counter sigma_j >= T_i;
+  - success condition: reconstructed error estimate equals original error;
+  - zero syndrome but wrong reconstruction counts as wrongzero failure.
+
+At iteration i:
+  - residual error mask E_i = e_mask XOR estimate_mask;
+  - residual syndrome s_i = syndrome(E_i);
+  - for every bit j, counter sigma_j = popcount(column_mask[j] & s_i);
+  - flip set F_i = {j : sigma_j >= T_i};
+  - estimate_mask ^= F_i;
+  - E_{i+1} = E_i XOR F_i;
+  - if E_{i+1}=0, classify success;
+  - if syndrome(E_{i+1})=0 and E_{i+1} != 0, classify wrongzero;
+  - after I iterations, if not success, classify timeout unless a configured
+    deterministic nonzero halt rule applies.
+
+The implementation must log enough trajectory data to reconstruct state counts
+and transition envelopes.
+
+================================================================================
+6. BITSET REPRESENTATION
+================================================================================
+
+Implement a compact deterministic bitset abstraction.
+
+6.1 Syndrome bitset
+
+For r <= 128, syndrome masks can be represented as u128.
+
+Required methods:
+  - empty() -> SyndromeMask
+  - set(pos)
+  - xor_assign(other)
+  - and(other) -> SyndromeMask
+  - popcount() -> u32
+  - is_zero() -> bool
+  - to_hex() -> String
+
+Use u128::count_ones for popcount.
+
+6.2 Error / bit-position mask
+
+For 2r <= 256, use a custom Mask256 as [u64;4]. This covers r up to 128.
+
+Required methods:
+  - empty()
+  - set(pos)
+  - clear(pos)
+  - contains(pos)
+  - xor_assign(other)
+  - union/intersection if needed
+  - popcount()
+  - is_zero()
+  - iter_ones(max_bits) -> iterator over set positions
+  - to_hex()
+
+Use four u64 limbs. All operations must mask off unused high bits when needed.
+
+6.3 Column masks
+
+Store column masks as Vec<SyndromeMask> of length 2r.
+
+================================================================================
+7. MODULE SPECIFICATION
+================================================================================
+
+7.1 src/combinatorics.rs
+
+Responsibilities:
+  - binomial coefficient exact computation for n <= 256 using u128 or BigUint if
+    needed;
+  - combination iterator over k-subsets of n elements;
+  - lexicographic combination successor;
+  - hypergeometric tail computation for near-codeword overlap tails;
+  - optional dynamic programming for union-bound tails.
+
+Required functions:
+
+  binom_u128(n: u32, k: u32) -> u128
+  iter_combinations(n: usize, k: usize) -> CombinationIterator
+  hypergeom_tail(n: usize, marked: usize, draws: usize, at_least: usize) -> f64
+
+CombinationIterator must be allocation-light and deterministic.
+
+7.2 src/key.rs
+
+Responsibilities:
+  - key representation;
+  - full key enumeration for toy domains;
+  - deterministic sampled-key generation;
+  - profile-stratified key sampling support;
+  - column neighborhood precomputation.
+
+Structs:
+
+  struct Key {
+      key_id: u64,
+      r: usize,
+      d: usize,
+      h0: Vec<u16>,
+      h1: Vec<u16>,
+  }
+
+  struct KeyRuntime {
+      key: Key,
+      column_masks: Vec<SyndromeMask>,
+  }
+
+Required functions:
+
+  enumerate_all_keys(r,d) -> iterator<Key>
+  sample_keys_uniform(r,d,n,seed) -> Vec<Key>
+  build_column_masks(key: &Key) -> Vec<SyndromeMask>
+  key_to_support_string(key) -> String
+
+Full key enumeration order:
+  - iterate h0 combinations lexicographically;
+  - nested iterate h1 combinations lexicographically;
+  - assign increasing key_id.
+
+For theorem-grade exact-keyspace runs, do not quotient by cyclic symmetry in v01.
+This avoids orbit-weight mistakes. Full enumeration for r=11,d=3 and r=13,d=3 is
+small enough for the intended toy runs.
+
+7.3 src/profile.rs
+
+Responsibilities:
+  - compute structural profile coordinates for each key;
+  - serialize profile data;
+  - compute profile coordinates used in M1, M2, M3.
+
+Profile coordinates to implement in v01:
+
+  A. cyclic-overlap spectra D_ab(Delta)
+     For a,b in {0,1}, Delta in Z_r:
+       D_ab(Delta) = |Supp(h_a) intersect (Supp(h_b)+Delta)|.
+
+  B. local cycle pressure
+       C4_loc = sum over nontrivial (a,b,Delta) of binom(D_ab(Delta),2).
+
+  C. maximum nontrivial overlap
+       D_max = max nontrivial D_ab(Delta).
+
+  D. overlap histogram Lambda
+       Lambda[k] = # nontrivial indices with D_ab(Delta)=k.
+
+  E. canonical near-codeword family N0
+       N0 = rotations of (h0,0) and rotations of (0,h1).
+
+  F. near-codeword overlap tail A_N(u)
+       For configured u_values, compute union-bound upper tail:
+         A_N(u) <= sum_{N in N0} Pr[|E intersect N| >= u]
+       under uniform t-subset errors over 2r positions.
+       Cap at 1.0.
+
+  G. low-syndrome gathering counts G_H(m,l)
+       For configured m <= MG and l <= LG, enumerate all m-subsets of J and
+       count how many have syndrome weight <= l.
+       Default MG must be small, e.g. MG=3 or 4.
+
+  H. fixed-point indicator count B_H(M,Tset)
+       For all nonempty residual supports E with |E| <= MB, compute syndrome.
+       If syndrome nonzero and there exists T in configured Tset such that no
+       position has counter >= T, count E as fixed-point candidate.
+       Default MB must be small, e.g. MB=3 or 4.
+
+  I. local weighted-overlap budget summary Omega proxy
+       For each candidate residual support encountered during decoding, the
+       state module computes Omega(E). At key-profile level, store optional
+       summary values for singletons/pairs:
+         Omega_pair_max = max_{j,k} I_H(j,k)*1[I_H(j,k)>=2].
+
+Profile output columns in profiles.csv:
+
+  run_id,key_id,r,d,t,c4_loc,d_max,lambda_json,
+  an_u_json,gather_json,b_fixed,tset_json,omega_pair_max,profile_hash
+
+Profile hash:
+  - deterministic SHA-256 over serialized profile coordinates used for M3 bins.
+
+7.4 src/decoder.rs
+
+Responsibilities:
+  - deterministic bit-flipping decoder;
+  - exact p_H computation over enumerated errors;
+  - trajectory event logging.
+
+Structs:
+
+  enum Outcome { Success, Timeout, WrongZero, NonzeroHalt }
+
+  struct IterationLog {
+      i: usize,
+      e_mask: Mask256,
+      syndrome: SyndromeMask,
+      residual_weight: u16,
+      syndrome_weight: u16,
+      flip_mask: Mask256,
+      flip_count: u16,
+      missed_mask: Mask256,
+      false_mask: Mask256,
+      missed_count: u16,
+      false_count: u16,
+      state_id: u64,
+  }
+
+  struct DecodeResult {
+      outcome: Outcome,
+      iterations: u16,
+      final_residual_weight: u16,
+      final_syndrome_weight: u16,
+      logs: Vec<IterationLog>,
+  }
+
+Required functions:
+
+  decode_with_logs(key_rt, e_mask, decoder_config, state_config) -> DecodeResult
+  decode_fast(key_rt, e_mask, decoder_config) -> Outcome
+
+The exact runs should use decode_with_logs when transition envelopes are enabled.
+For speed-only pilot scans, decode_fast is allowed.
+
+7.5 src/state.rs
+
+Responsibilities:
+  - compute compressed residual state chi_H(E);
+  - compute state bins for M1, M2, and M3;
+  - assign deterministic state_id values.
+
+State models:
+
+  M1: syndrome-weight model
+      x = (t_residual, syndrome_weight)
+
+  M2: near-codeword model
+      x = (t_residual, syndrome_weight, u_near_bin)
+
+  M3: full dependency-aware model
+      x = (t_residual, syndrome_weight, u_near_bin, fixed_bin, omega_bin)
+
+Terminal states:
+  - succ
+  - bad
+
+State computation:
+  - if residual mask E is zero: succ;
+  - if syndrome(E)==0 and E != 0: bad/wrongzero;
+  - if fixed-point predicate is true under current or any configured threshold:
+    fixed_bin marks it; if configured strict_absorbing=true, map to bad;
+  - otherwise compute tuple.
+
+Near-codeword overlap U_N(E):
+  - N0 consists of all rotations of h0 in block 0 and h1 in block 1.
+  - U_N(E) = max overlap with any N in N0.
+
+Omega(E):
+  - For each candidate bit j, compute
+      W_H(j,E)=sum_{k in E, k!=j} I_H(j,k)*1[I_H(j,k)>=2].
+  - Omega(E)=max_j W_H(j,E).
+  - Bin Omega using configured omega_bins.
+
+State serialization:
+  state_id = stable hash of model_name + tuple + terminal marker.
+
+7.6 src/enumerate.rs
+
+Responsibilities:
+  - enumerate errors;
+  - run key/error loops;
+  - collect p_H and trajectory counts;
+  - support checkpointing/resume if configured.
+
+Exact p_H computation:
+
+  failures = 0
+  total = binom(2r,t)
+  for e in combinations(2r,t):
+      result = decode_with_logs(...)
+      if outcome != Success: failures += 1
+      update state_counts and transition counts
+  p_H = failures / total
+
+Transition data to collect:
+
+For each model M in {M1,M2,M3}, each key H, iteration i, and state x:
+  - denominator count: # trajectories reaching x at iteration i;
+  - count by pair (m,l): # trajectories in x with missed_count=m,false_count=l;
+  - successor state count: # trajectories moving x -> y;
+  - outcome counts.
+
+Do not store per-error logs by default. Store aggregate counts. Per-error logs may be
+enabled only for debug runs.
+
+7.7 src/binning.rs
+
+Responsibilities:
+  - construct profile bins for M0, M1, M2, M3;
+  - enforce equal or comparable bin budgets;
+  - produce bins.csv.
+
+Model definitions:
+
+  M0: global average-only model.
+      All keys are in one bin.
+
+  M1: key-level bin uses simple structural/syndrome proxies only.
+      v01 key bin coordinates:
+        - d_max only, or c4_loc quantile only.
+      For state process, M1 uses (t_residual,S).
+      For key-tail direct binning, use quantile bins of c4_loc with bin_budget.
+
+  M2: near-codeword-only key model.
+      Key bin coordinates:
+        - A_N(u*) quantile, where u* is configured, plus optional d_max if needed
+          only to break ties.
+      State process uses (t_residual,S,u_near_bin).
+
+  M3: full profile model.
+      Key bin coordinates:
+        - c4_loc quantile;
+        - d_max exact or binned;
+        - A_N(u*) quantile;
+        - selected G_H(m,l) quantile;
+        - B_H fixed-point count binary/quantile;
+        - omega_pair_max bin.
+      State process uses (t_residual,S,u_near_bin,fixed_bin,omega_bin).
+
+Equal bin budget rule:
+  - For each configured bin_budget B, construct at most B nonempty bins per model.
+  - Use deterministic quantile binning on training/certified keys.
+  - For exact full-domain runs, bins are built on the whole domain because the
+    claim is descriptive/certified for that finite domain.
+  - For held-out diagnostics, bins must be learned on the training split only.
+
+Required output bins.csv columns:
+  run_id,model,bin_budget,bin_id,key_count,bin_descriptor_json
+
+7.8 src/certify.rs
+
+Responsibilities:
+  - direct profile-bin bounds;
+  - finite-state upper-process bounds;
+  - tail lifting;
+  - multi-query lifting.
+
+7.8.1 Direct bin bounds
+
+For each model and bin phi:
+
+  p_phi_max = max_{H in certified bin} p_H.
+  p_phi_mean = average_{H in bin} p_H.
+  nu_phi = key_count_phi / total_certified_keys.
+
+Write bin_bounds.csv:
+
+  run_id,model,bin_budget,bin_id,key_count,nu_phi,p_phi_max,p_phi_mean,
+  ph_min,ph_median,ph_p95,ph_max
+
+7.8.2 Transition envelope Q_i^+
+
+For each model M, bin phi, iteration i, state x, and pair (m,l):
+
+  For every key H in phi:
+      q_{i,H}(x;m,l) = count_{H,i,x,m,l} / denom_{H,i,x}
+      if denom=0, skip H for that state.
+
+  Q_i^+(phi,x;m,l) = max over H with denom>0 of q_{i,H}(x;m,l).
+
+Store transition_envelopes.jsonl with records:
+
+  {
+    "run_id": "...",
+    "model": "M3",
+    "bin_budget": 64,
+    "bin_id": 12,
+    "iteration": 2,
+    "state_id": 981273,
+    "state_tuple": {...},
+    "denom_key_count": 37,
+    "pairs": [ {"m":0,"l":0,"q_plus":0.91}, ... ],
+    "row_sum_q_plus": 1.17
+  }
+
+Rows are allowed to sum above 1.
+
+7.8.3 Successor relation
+
+For v01 enumeration-first certification, compute successor relation directly from
+observed trajectories:
+
+  observed_successors(phi,x,m,l) = set of y observed among certified trajectories
+  in bin phi, state x, and count pair (m,l).
+
+For theorem-grade exact full-domain runs, this observed relation is exact for the
+full enumerated domain.
+
+For sampled-key runs, it is exact only for the certified sampled-key set and must be
+reported as such.
+
+7.8.4 Upper kernel K_i^+
+
+For each phi,x,y:
+
+  K_i^+(phi;x,y) = sum over (m,l) such that y in observed_successors(phi,x,m,l)
+                  of Q_i^+(phi,x;m,l).
+
+Terminal states succ and bad are absorbing:
+
+  K_i^+(succ;succ)=1, K_i^+(bad;bad)=1.
+
+Rows may sum above 1.
+
+7.8.5 Initial upper measure alpha_0^+
+
+For each phi and state y:
+
+  alpha_0^+(phi;y) = max over H in phi of Pr_{e in E_t}[chi_H(E_0)=y].
+
+Compute this from exact state counts at iteration 0.
+
+For sampled-error runs, use one-sided confidence upper bounds. In v01 exact toy and
+r=31,t=4 selected runs should use exact enumeration where feasible.
+
+7.8.6 Propagation
+
+For each phi:
+
+  alpha = alpha_0^+
+  for i in 0..I-1:
+      alpha_next[y] = sum_x alpha[x] * K_i^+(x,y)
+      alpha = alpha_next
+
+  p_phi_FS_plus = min(1, alpha[bad] + sum_{nonterminal y} alpha[y])
+
+Write fs_bounds.csv:
+
+  run_id,model,bin_budget,bin_id,p_phi_fs_plus,row_mass_max,
+  alpha_total_final,bad_mass_final,nonterminal_mass_final,
+  vacuous_flag
+
+7.8.7 Tail lifting
+
+For each model and bin budget:
+
+  Exact empirical tail:
+      tail_exact(tau) = # {H: p_H > tau} / #keys
+
+  Direct-bin upper tail:
+      tail_direct(tau) = sum_{phi: p_phi_max > tau} nu_phi
+
+  Finite-state upper tail:
+      tail_fs(tau) = sum_{phi: p_phi_FS_plus > tau} nu_phi
+
+  Average bound:
+      delta_direct = sum_phi nu_phi * p_phi_max
+      delta_fs = sum_phi nu_phi * p_phi_FS_plus
+
+  Static-key q-query:
+      failq_direct = sum_phi nu_phi * (1 - (1-p_phi_max)^q)
+      failq_fs = sum_phi nu_phi * (1 - (1-p_phi_FS_plus)^q)
+      failq_exact = average_H (1 - (1-p_H)^q)
+      failq_avg_union = min(1, q * average_H p_H)
+
+Write tail_curves.csv and metrics.csv.
+
+7.9 src/metrics.rs
+
+Responsibilities:
+  - coverage;
+  - looseness;
+  - additive gap for p_H=0;
+  - Spearman rank correlation;
+  - top-tail precision/recall;
+  - AUC if implemented;
+  - tail-curve error;
+  - ablation metrics.
+
+Metrics:
+
+  coverage = fraction of H such that p_H <= p_{kappa(H)}^+ + epsilon.
+  epsilon = 1e-15 for floating errors.
+
+  looseness_ratio for p_H>0:
+      p_bound / p_H
+
+  additive_gap_zero for p_H=0:
+      p_bound
+
+  median_looseness, p95_looseness, max_looseness.
+
+  vacuous_bin_fraction:
+      # bins with p_bound >= 1 / # nonempty bins
+
+  Spearman:
+      rank correlation between key score and p_H.
+      Use p_bound assigned to key as score.
+
+  Top-tail recall:
+      For top alpha fraction of keys by exact p_H, alpha in {0.01,0.05,0.10}:
+        recall@alpha = |top_by_score(alpha) intersect top_by_pH(alpha)| /
+                       |top_by_pH(alpha)|
+
+  Tail curve L1 error:
+      mean over tau grid of max(0, tail_bound(tau)-tail_exact(tau)).
+
+Tau grid:
+  - include exact unique p_H values for toy runs if not too many;
+  - otherwise use logarithmic grid plus 0:
+      0, 1e-6, 3e-6, 1e-5, ..., 1.
+
+7.10 src/rare_event.rs
+
+Responsibilities:
+  - conditional sampling/enumeration of errors with large near-codeword overlap;
+  - compute p_{H,u}^N and contribution A_H^N(u)*p_{H,u}^N.
+
+For exact small runs:
+  - enumerate all e in E_t;
+  - for each u, keep e if U_N(e)>=u;
+  - compute conditional failure rate exactly.
+
+For sampled larger runs:
+  - sample e uniformly from E_t until enough conditional samples are collected;
+  - record total draws and accepted draws;
+  - report one-sided confidence intervals if requested.
+
+Output rare_event.jsonl:
+
+  {
+    "key_id": 123,
+    "u": 3,
+    "tail_mass_A_union": 0.0041,
+    "conditional_total": 715,
+    "conditional_failures": 88,
+    "p_conditional": 0.1231,
+    "contribution_proxy": 0.000504,
+    "exact_conditional": true
+  }
+
+================================================================================
+8. CONFIGURATION FILE FORMAT
+================================================================================
+
+Use TOML configs. Every run must resolve the config and copy it to:
+
+  artifacts/<run_id>/configs/config.resolved.toml
+
+Required fields:
+
+  [run]
+  run_id = "exact_toy_r11_d3_t3"
+  seed = 20260509
+  mode = "exact_full_keyspace"   # exact_full_keyspace | sampled_keys | stratified_keys
+  output_dir = "artifacts/exact_toy_r11_d3_t3"
+
+  [parameters]
+  r = 11
+  d = 3
+  t = 3
+
+  [decoder]
+  iterations = 5
+  thresholds = [2,2,2,2,2]
+  wrong_zero_is_failure = true
+  flip_policy = "all_ge_threshold"
+
+  [profile]
+  u_values = [1,2,3]
+  gathering_m_max = 3
+  gathering_l_max = 3
+  fixedpoint_m_max = 3
+  fixedpoint_thresholds = [2,3]
+
+  [state]
+  models = ["M0","M1","M2","M3"]
+  u_bins = [0,1,2,3,99]
+  omega_bins = [0,1,2,4,8,99]
+  strict_absorbing = false
+
+  [binning]
+  bin_budgets = [8,16,32,64]
+  quantile_ties = "stable"
+
+  [sampling]
+  key_count = 0
+  error_sample_count = 0
+  train_fraction = 0.7
+
+  [metrics]
+  q_values = [1,10,100,1000]
+  top_tail_fractions = [0.01,0.05,0.10]
+
+Suggested exact_toy_r11_d3_t3.toml:
+
+  r=11,d=3,t=3 gives:
+    #keys = C(11,3)^2 = 27225
+    #errors/key = C(22,3) = 1540
+    total decodes = 41,926,500
+
+This is a good first exact theorem-grade run.
+
+Suggested exact_toy_r13_d3_t2.toml:
+
+  r=13,d=3,t=2 gives:
+    #keys = C(13,3)^2 = 81796
+    #errors/key = C(26,2) = 325
+    total decodes = 26,583,700
+
+This is another manageable full-domain run.
+
+Suggested sampled_r31_d5_t4.toml:
+
+  r=31,d=5,t=4 gives:
+    #errors/key = C(62,4) = 557845
+  Use sampled or stratified keys, e.g. 500-2000 keys depending on runtime.
+
+================================================================================
+9. CLI SPECIFICATION
+================================================================================
+
+Binary name: dfrcert
+
+Commands:
+
+  dfrcert run --config <path> --out <dir>
+      Full pipeline: generate/enumerate keys, compute profiles, enumerate/simulate
+      errors, compute p_H, build bins, compute bounds, metrics, and outputs.
+
+  dfrcert profiles --config <path> --out <dir>
+      Generate keys and compute profiles only.
+
+  dfrcert decode --config <path> --profiles <profiles.csv> --out <dir>
+      Run decoder enumeration/sampling and trajectory aggregation.
+
+  dfrcert certify --config <path> --inputs <dir> --out <dir>
+      Build bins, direct bounds, finite-state bounds, tail curves, and metrics.
+
+  dfrcert rare-event --config <path> --inputs <dir> --out <dir>
+      Run near-codeword conditional diagnostics.
+
+  dfrcert calibrate --config <path> --out <dir>
+      Pilot threshold scan on a small sampled subset. This is optional and must not
+      be used for final claims unless the selected final config is rerun from
+      scratch. The final report must identify the final fixed decoder schedule.
+
+All commands must write a manifest.json containing:
+  - git commit if available;
+  - Docker image tag;
+  - config hash;
+  - binary version;
+  - start/end timestamps;
+  - host-independent command string;
+  - all random seeds;
+  - counts of keys/errors processed.
+
+================================================================================
+10. OUTPUT SCHEMAS
+================================================================================
+
+10.1 keys.csv
+
+Columns:
+  run_id,key_id,r,d,h0,h1,key_source,seed,index
+
+h0 and h1 format:
+  semicolon-separated sorted integers, e.g. "0;4;9".
+
+10.2 profiles.csv
+
+Columns:
+  run_id,key_id,r,d,t,c4_loc,d_max,lambda_json,an_u_json,
+  gather_json,b_fixed,omega_pair_max,profile_hash
+
+10.3 ph_exact.csv
+
+Columns:
+  run_id,key_id,total_errors,failures,success,timeout,wrongzero,nonzerohalt,
+  p_h,exact_errors,decoder_iterations,thresholds
+
+10.4 state_counts.jsonl
+
+One JSON object per key/model/iteration/state:
+
+  {
+    "run_id": "...",
+    "model": "M3",
+    "key_id": 17,
+    "iteration": 2,
+    "state_id": 123456,
+    "state_tuple": {"tw":2,"sw":4,"u_bin":1,"fixed":0,"omega_bin":2},
+    "count": 918,
+    "ml_counts": [{"m":0,"l":0,"count":870}, {"m":1,"l":0,"count":48}],
+    "successor_counts": [{"state_id":999,"count":870}, {"state_id":111,"count":48}]
+  }
+
+10.5 bin_bounds.csv
+
+Columns:
+  run_id,model,bin_budget,bin_id,key_count,nu_phi,p_phi_max,p_phi_mean,
+  ph_min,ph_median,ph_p95,ph_max
+
+10.6 fs_bounds.csv
+
+Columns:
+  run_id,model,bin_budget,bin_id,key_count,nu_phi,p_phi_fs_plus,
+  alpha_total_final,bad_mass_final,nonterminal_mass_final,row_mass_max,
+  vacuous_flag
+
+10.7 tail_curves.csv
+
+Columns:
+  run_id,model,bin_budget,bound_type,tau,tail_value
+
+bound_type values:
+  exact, direct_bin, finite_state
+
+10.8 metrics.csv
+
+Columns:
+  run_id,model,bin_budget,bound_type,coverage,median_looseness,
+  p95_looseness,max_looseness,vacuous_bin_fraction,spearman,
+  tail_l1_error,delta_bound,delta_exact
+
+10.9 top_tail_recall.csv
+
+Columns:
+  run_id,model,bin_budget,bound_type,tail_fraction,precision,recall
+
+10.10 ablation.csv
+
+Columns:
+  run_id,model_variant,bin_budget,coordinates,coverage,median_looseness,
+  p95_looseness,spearman,tail_l1_error,recall_top_5pct
+
+================================================================================
+11. EXPERIMENTAL WORKFLOWS
+================================================================================
+
+Workflow 1: Exact toy certification
+
+Purpose:
+  Establish theorem-grade exact finite-domain results.
+
+Command:
+
+  docker run --rm \
+    -v "$PWD/artifacts:/work/artifacts" \
+    dependency-aware-dfrcert:v01 \
+    dfrcert run --config configs/exact_toy_r11_d3_t3.toml \
+    --out artifacts/exact_toy_r11_d3_t3
+
+Required outputs:
+  - exact p_H for every key;
+  - exact empirical p_H distribution;
+  - M0/M1/M2/M3 direct-bin bounds;
+  - M0/M1/M2/M3 finite-state bounds;
+  - tail curves;
+  - metrics;
+  - plots;
+  - report.md.
+
+Acceptance criteria:
+  - coverage = 1.0 for direct-bin bounds by construction;
+  - finite-state coverage = 1.0 for all keys;
+  - M3 finite-state p_phi^+ is not 1 for most nonempty bins;
+  - M3 direct-bin and finite-state tail curves are no worse than M1 and M2 under
+    tail_l1_error for at least one bin budget;
+  - M3 Spearman score exceeds M1 and M2 or the report explains a negative result.
+
+Workflow 2: Exact second toy domain
+
+Purpose:
+  Check that the result is not an artifact of one small r.
+
+Run:
+  exact_toy_r13_d3_t2.toml
+
+Acceptance:
+  Same as Workflow 1.
+
+Workflow 3: Sampled larger reduced domain
+
+Purpose:
+  Show diagnostic usefulness on a less toy-like instance.
+
+Run:
+
+  docker run --rm \
+    -v "$PWD/artifacts:/work/artifacts" \
+    dependency-aware-dfrcert:v01 \
+    dfrcert run --config configs/sampled_r31_d5_t4.toml \
+    --out artifacts/sampled_r31_d5_t4
+
+Required behavior:
+  - sample or stratify keys deterministically;
+  - enumerate all errors per selected key if configured exact_errors=true;
+  - report results as certified only for the sampled-key set;
+  - include held-out diagnostic metrics if train_fraction < 1.
+
+Acceptance:
+  - exact p_H computed for sampled keys if exact_errors=true;
+  - M3 improves top-tail recall or tail_l1_error over M2 on held-out keys, or the
+    report clearly states that full profile did not improve over near-codeword-only.
+
+Workflow 4: Rare-event near-codeword stress test
+
+Purpose:
+  Determine whether M3 adds information beyond near-codeword overlap.
+
+Run:
+
+  docker run --rm \
+    -v "$PWD/artifacts:/work/artifacts" \
+    dependency-aware-dfrcert:v01 \
+    dfrcert rare-event --config configs/rare_event_r31_d5_t4.toml \
+    --inputs artifacts/sampled_r31_d5_t4 \
+    --out artifacts/rare_event_r31_d5_t4
+
+Required outputs:
+  - conditional failure rates p_{H,u}^N;
+  - contribution proxy A_H^N(u)*p_{H,u}^N;
+  - scatter of conditional contribution vs M2 and M3 scores.
+
+Acceptance:
+  - report whether high-failure keys are fully explained by near-codeword overlap;
+  - if not, identify which added M3 coordinates separate keys within the same
+    near-codeword band.
+
+================================================================================
+12. PLOTS AND REPORTING
+================================================================================
+
+12.1 tail_curves.pdf
+
+Plot:
+  x-axis: tau on log scale when tau>0, with zero handled separately;
+  y-axis: Pr[p_H > tau];
+  curves: exact, M1 direct, M2 direct, M3 direct, M3 finite-state.
+
+The plot must visually show whether the bound stays above the exact curve and
+whether M3 is tighter than baselines.
+
+12.2 scatter_scores.pdf
+
+For each model M1/M2/M3:
+  x-axis: model score assigned to key, e.g. p_bound or risk score;
+  y-axis: exact p_H;
+  use log scale for y when nonzero;
+  annotate Spearman correlation.
+
+12.3 looseness_boxplot.pdf
+
+Boxplot or violin-like summary of looseness ratio for keys with p_H>0.
+Separate M1/M2/M3 and direct/finite-state.
+
+12.4 report.md
+
+The report must include:
+  - parameter set;
+  - decoder schedule;
+  - exact or sampled nature of the claim;
+  - number of keys and errors;
+  - observed p_H range;
+  - average DFR;
+  - coverage table;
+  - looseness table;
+  - tail separation table;
+  - ablation table;
+  - explanation of negative results if M3 does not improve over M2;
+  - explicit statement that no production-parameter BIKE DFR claim follows.
+
+================================================================================
+13. ABLATION REQUIREMENTS
+================================================================================
+
+Implement ablations for M3.
+
+Variants:
+
+  M3_base:
+    c4_loc + d_max only
+
+  M3_near:
+    c4_loc + d_max + A_N(u*)
+
+  M3_gather:
+    c4_loc + d_max + A_N(u*) + selected G_H(m,l)
+
+  M3_fixed:
+    c4_loc + d_max + A_N(u*) + B_H
+
+  M3_full:
+    c4_loc + d_max + A_N(u*) + selected G_H(m,l) + B_H + omega_pair_max
+
+For each variant, compute the same metrics as M3. The report must identify which
+coordinates materially improve tail separation.
+
+================================================================================
+14. CALIBRATION RULES
+================================================================================
+
+The final experiments must use fixed decoder schedules declared in the config.
+
+A calibration command may scan schedules only to find a reduced stress setting
+with visible failures. Calibration output cannot itself be used as final evidence.
+
+Calibration target:
+  - average p_H neither all zero nor near one;
+  - visible variation across keys;
+  - at least 1% of keys with p_H above median by a nontrivial factor;
+  - wrongzero and timeout outcomes separately counted.
+
+After calibration, create a fixed config and rerun the full pipeline from scratch.
+
+================================================================================
+15. PERFORMANCE CONSTRAINTS
+================================================================================
+
+The implementation should be able to complete the exact r=11,d=3,t=3 run inside
+a practical Docker session on a normal workstation.
+
+Performance design requirements:
+  - precompute column masks for each key;
+  - use u128 syndrome masks and fixed-size Mask256 error masks;
+  - avoid storing per-error logs by default;
+  - aggregate counts online;
+  - flush CSV/JSON periodically;
+  - parallelize over keys using rayon;
+  - ensure deterministic output ordering despite parallel execution.
+
+Parallelism:
+  - use rayon for per-key parallelism;
+  - collect per-key outputs in memory or temporary files;
+  - merge by increasing key_id before writing final outputs.
+
+Determinism:
+  - with the same config and seed, outputs must be byte-stable except for
+    timestamps in manifest.json;
+  - if byte-stability is difficult, data CSVs must be stable and manifest may vary.
+
+================================================================================
+16. NUMERICAL PRECISION
+================================================================================
+
+Use integer counts wherever possible.
+
+For probabilities:
+  - compute p_H as failures as u128 divided by total_errors as f64;
+  - store failures and total_errors so exact rational values can be recovered;
+  - use f64 for metrics and plots;
+  - coverage comparisons use epsilon = 1e-15.
+
+For row sums and upper-process propagation:
+  - use f64;
+  - cap final p_phi_FS_plus at 1.0;
+  - do not cap intermediate alpha values, because non-normalized upper kernels may
+    exceed probability mass; record alpha_total_final.
+
+================================================================================
+17. VALIDATION INVARIANTS
+================================================================================
+
+The implementation must check these invariants at runtime and fail loudly if they
+are violated.
+
+Key/profile invariants:
+  - h0 and h1 have size d;
+  - supports contain unique positions in [0,r);
+  - column masks have popcount d;
+  - D_aa(0)=d;
+  - D_ab(Delta) in [0,d].
+
+Decoder invariants:
+  - syndrome(E_i) equals logged syndrome at every iteration;
+  - E_i = original_error XOR estimate_i;
+  - missed_count + true_flipped_count = residual_weight;
+  - false_count + clean_unflipped_count = 2r - residual_weight;
+  - E_{i+1} = missed_mask union false_mask;
+  - success iff final residual mask is zero.
+
+Enumeration invariants:
+  - number of enumerated errors equals binom(2r,t) in exact mode;
+  - sum of outcome counts equals total_errors for each key;
+  - state denominators match number of trajectories reaching iteration i.
+
+Certification invariants:
+  - direct bin p_phi_max >= p_H for every key in bin;
+  - Q_i^+(phi,x;m,l) >= q_{i,H}(x;m,l) for every key H in bin;
+  - terminal states are absorbing;
+  - finite-state p_phi_FS_plus in [0,1] after final cap;
+  - reported finite-state coverage equals 1.0 on exact certified domains.
+
+================================================================================
+18. REPORTING LANGUAGE REQUIREMENTS
+================================================================================
+
+The generated report must use careful claim language.
+
+Allowed:
+  - "exact over the reduced key and error domain";
+  - "certified for the enumerated key set";
+  - "diagnostic on sampled keys";
+  - "non-vacuous on this reduced domain";
+  - "M3 improves tail separation over M2 under metric X";
+  - "the full profile did not improve over near-codeword-only in this run".
+
+Disallowed:
+  - "proves BIKE production DFR";
+  - "establishes standardized-parameter security";
+  - "near-codeword effects are newly discovered";
+  - "weak keys are solved";
+  - "the compressed process is Markovian".
+
+================================================================================
+19. GAP ITEMS TO KEEP OPEN
+================================================================================
+
+The implementation must include GAP.md with at least these open items:
+
+  GAP-01: Production-parameter certification is not implemented. The current
+  artifact certifies reduced domains and sampled-key diagnostics only.
+
+  GAP-02: Analytic screened-binomial dirty-tail certificates are not the primary
+  v01 path. v01 uses enumeration-first transition envelopes. Future work may add
+  analytic dirty-tail certificates for larger parameters.
+
+  GAP-03: Full near-codeword family enumeration is not implemented at larger
+  parameters. v01 uses canonical rotations and optional bounded search.
+
+  GAP-04: State compression may omit dependencies that matter at later iterations.
+  v01 reports looseness and ablations to diagnose this.
+
+  GAP-05: Sampled-key frequency envelopes with rigorous confidence bounds are
+  optional in v01. Sampled larger runs must be labeled as sampled-set certificates
+  or diagnostics unless such envelopes are implemented.
+
+  GAP-06: DOCX/shared-object storage-size optimization is irrelevant to this
+  experiment artifact, but the project-level open item remains acknowledged for
+  document-producing artifacts.
+
+================================================================================
+20. IMPLEMENTATION ORDER FOR CODEX
+================================================================================
+
+Implement in this order.
+
+Step 1: Project skeleton and Docker
+  - Create Cargo project.
+  - Add Dockerfile and build.sh.
+  - Add config parser.
+  - Add manifest writer.
+
+Step 2: Bitsets and combinatorics
+  - Implement SyndromeMask=u128 utilities.
+  - Implement Mask256.
+  - Implement combination iterator and binomial.
+
+Step 3: Key generation and column masks
+  - Implement full key enumeration.
+  - Implement sampled keys.
+  - Implement column mask construction.
+  - Add invariant checks.
+
+Step 4: Decoder
+  - Implement deterministic threshold decoder.
+  - Implement exact error enumeration for one key.
+  - Verify outcome counts.
+
+Step 5: Profiles
+  - Implement D_ab, C4_loc, D_max, Lambda.
+  - Implement canonical near-codeword family and A_N(u).
+  - Implement small G_H and B_H.
+  - Write profiles.csv.
+
+Step 6: State models and trajectory aggregation
+  - Implement M1/M2/M3 state computation.
+  - Aggregate state counts, miss/false counts, successor counts.
+  - Write state_counts.jsonl.
+
+Step 7: Direct bin bounds
+  - Implement binning for M0/M1/M2/M3.
+  - Compute p_phi_max and tail lifting.
+  - Write bin_bounds.csv and tail_curves.csv.
+
+Step 8: Finite-state upper process
+  - Compute Q_i^+.
+  - Compute observed successor sets.
+  - Build K_i^+.
+  - Propagate alpha_0^+.
+  - Write fs_bounds.csv.
+
+Step 9: Metrics and plots
+  - Implement coverage, looseness, Spearman, top-tail recall, tail L1.
+  - Add Python plotting scripts.
+  - Generate report.md.
+
+Step 10: Rare-event diagnostics
+  - Implement U_N conditional enumeration/sampling.
+  - Write rare_event.jsonl.
+  - Add rare-event plots to report.
+
+Step 11: Ablations
+  - Implement M3 variants.
+  - Write ablation.csv.
+  - Add ablation table to report.
+
+================================================================================
+21. FINAL ACCEPTANCE CHECKLIST
+================================================================================
+
+The artifact is complete when all of the following are true.
+
+[ ] ./build.sh builds the Docker image successfully.
+[ ] Docker command for exact_toy_r11_d3_t3 completes and writes all required CSV,
+    JSONL, plot, and report files.
+[ ] ph_exact.csv has one row per enumerated key.
+[ ] For exact runs, every key has total_errors=binom(2r,t).
+[ ] Direct-bin coverage is 1.0 for all models.
+[ ] Finite-state coverage is 1.0 for exact certified domains.
+[ ] tail_curves.csv includes exact, direct_bin, and finite_state curves.
+[ ] metrics.csv includes M0, M1, M2, and M3 for every configured bin budget.
+[ ] ablation.csv reports M3 coordinate ablations.
+[ ] report.md explicitly states the claim boundary.
+[ ] GAP.md contains the required open items.
+[ ] README.md contains Docker-only commands.
+
+================================================================================
+22. EXPECTED PAPER-LEVEL USE OF RESULTS
+================================================================================
+
+If the experiments are successful, the paper can include a reduced-parameter
+section with language like:
+
+  "On fully enumerable reduced QC-MDPC domains, the dependency-aware profile
+  yields certified profile-class upper bounds on p_H that are non-vacuous and
+  tighter than syndrome-only, average-only, and near-codeword-only baselines.
+  The same profile improves separation of high-p_H keys and gives sharper
+  static-key tail diagnostics. These experiments certify the methodology on
+  finite domains; they do not imply a production-parameter DFR bound."
+
+If M3 does not improve over M2, the paper must instead state:
+
+  "On the tested reduced domains, near-codeword overlap explains most observed
+  failure-tail separation, and the additional dependency coordinates do not yet
+  improve the bound. The result narrows the useful profile coordinates for future
+  certification work."
+
+This negative outcome is still publishable as a rigorous diagnostic if reported
+honestly, but the novelty claim must be narrowed.
+

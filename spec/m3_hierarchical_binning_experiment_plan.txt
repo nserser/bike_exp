@@ -1,0 +1,641 @@
+Hierarchical M3 Profile Binning and Follow-up Experiments
+==========================================================
+
+Purpose
+-------
+
+This file specifies the next implementation step for the dependency-aware DFR
+experiment pipeline.
+
+The current same-key experiment produced an important result: the key-conditioned
+tail is real, but the naive M3 scalar score is not yet useful. In the r=31, d=5,
+t=1, T=4 run, the simple M2 diagnostic captured the bad-key tail, while the
+packed/full M3 score diluted the useful signal and ranked keys poorly.
+
+The next step is therefore:
+
+    Replace naive M3 scoring with hierarchical profile binning that refines M2
+    instead of overriding it, then rerun the same-key comparison and the t=2
+    exact experiment.
+
+This should be implemented before changing the paper theory. The goal is to test
+whether the full structural profile can improve certification tightness or tail
+prediction once it is used as a refinement of the strongest observed baseline,
+rather than as an unnormalized scalar score.
+
+Background from the Previous Run
+--------------------------------
+
+The latest same-key diagnostic run found:
+
+    r = 31
+    d = 5
+    t = 1
+    threshold schedule T = 4
+    keys = 128
+
+Observed key-conditioned failure distribution:
+
+    123 keys had p_H = 0
+    3 keys had p_H = 0.5
+    2 keys had p_H = 1.0
+
+Thus:
+
+    bad-key mass = 5 / 128
+    empirical average DFR = 0.02734375
+
+This is useful because it shows a genuine static-key tail: most keys decode all
+single-bit errors, while a small number of structurally bad keys dominate the
+average failure rate.
+
+The model comparison showed:
+
+    M2 was useful:
+        - all bad keys were captured by the highest-risk M2 bin;
+        - M2 had the best tail L1 error and strongest bad-key recall.
+
+    Naive M3 was not useful:
+        - bad keys were spread across several M3 bins;
+        - M3's packed scalar score appears to combine unrelated coordinates in a
+          way that destroys the M2 signal.
+
+Interpretation:
+
+    The full profile idea is not disproved. The problem is likely the M3
+    scoring/binning design. M3 should be a hierarchical refinement of M2, not a
+    replacement that reorders keys by a packed aggregate score.
+
+Definitions
+-----------
+
+Let each key H have the following available quantities:
+
+    p_H:
+        Exact measured key-conditioned failure probability.
+
+    M0 score/bin:
+        Baseline independence-only or coarse baseline diagnostic.
+
+    M1 score/bin:
+        Syndrome-weight-only diagnostic.
+
+    M2 score/bin:
+        Near-codeword/high-overlap diagnostic that performed well in the latest
+        t=1 run.
+
+    M3 old score/bin:
+        Previous full-profile packed scalar score. This should be kept for
+        comparison, but should no longer be the main full-profile model.
+
+    Raw profile coordinates:
+        The implementation should store these explicitly, not only as a packed
+        integer:
+            - D_max(H)
+            - C4_loc(H)
+            - overlap histogram Lambda_H(k), especially high-overlap counts
+            - near-codeword overlap tail coordinates A_H^N(u)
+            - gathering counts G_H(m, ell)
+            - fixed-point / absorbing indicators B_H
+            - max local weighted-overlap budget Omega_H
+            - any per-key maximum clean counter statistic used for t=1
+
+New Model: M3_hier
+------------------
+
+Implement a new model called:
+
+    M3_hier
+
+M3_hier must be a hierarchical bin, not a single unnormalized scalar score.
+
+Core requirement:
+
+    M3_hier must refine M2.
+
+That means if two keys are in different M2 bins, M3_hier must keep that ordering
+or separation. Additional structural coordinates may only split keys inside an
+M2 bin; they must not override the primary M2 risk separation.
+
+Suggested representation:
+
+    M3_hier_bin(H) =
+        (
+            M2_bin(H),
+            C4_bin(H),
+            Dmax_bin(H),
+            Gather_bin(H),
+            Absorb_bin(H),
+            Omega_bin(H)
+        )
+
+The exact coordinates can be adjusted based on what is available in the current
+artifact, but M2_bin must be the first coordinate.
+
+Do not compute M3_hier as:
+
+    a * M2 + b * C4 + c * Dmax + ...
+
+unless all coordinates are normalized and monotonicity is justified. For this
+step, avoid weighted scalar scores. Use tuple bins.
+
+Primary monotonic ordering for risk ranking:
+
+    Sort M3_hier keys lexicographically by:
+        1. M2_bin descending, if larger M2 means higher risk;
+        2. then by refinement coordinates descending only if larger means higher risk.
+
+If any coordinate has the opposite direction, normalize it before sorting or
+store an explicit "risk_direction" metadata field.
+
+Important:
+
+    The first version of M3_hier should be conservative and simple. Its purpose
+    is to preserve M2's bad-key recall while testing whether additional profile
+    coordinates improve tightness inside high-M2 bins.
+
+Implementation Tasks
+--------------------
+
+Task 1: Preserve Raw Profile Coordinates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Modify the experiment output so that each key row stores raw profile coordinates
+separately.
+
+Required output file:
+
+    per_key_profiles.csv
+
+Required columns:
+
+    run_id
+    key_id
+    h0_support
+    h1_support
+    p_h
+    failure_count
+    error_count
+    M0_score
+    M0_bin
+    M1_score
+    M1_bin
+    M2_score
+    M2_bin
+    M3_old_score
+    M3_old_bin
+    Dmax
+    C4_loc
+    Lambda_ge_2_count
+    Lambda_ge_3_count
+    Lambda_max_count
+    near_tail_u1
+    near_tail_u2
+    near_tail_u3
+    near_tail_u4
+    G_2_ell_min_or_count
+    G_3_ell_min_or_count
+    B_fixed_count
+    Omega_max
+    max_clean_counter_t1
+    notes
+
+If some columns are not currently available, include them with empty values and
+document them in notes. Do not silently drop them.
+
+Task 2: Implement Hierarchical Binning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Create a script or function:
+
+    build_hierarchical_m3_bins(input_csv, output_csv, config)
+
+Suggested file:
+
+    src/hierarchical_bins.py
+
+Inputs:
+
+    per_key_profiles.csv
+    binning configuration JSON/YAML
+
+Outputs:
+
+    per_key_profiles_with_m3_hier.csv
+
+Required new columns:
+
+    M3_hier_tuple
+    M3_hier_bin
+    M3_hier_rank_score
+    M3_hier_primary_bin
+    M3_hier_refinement_bin
+
+M3_hier_tuple should be a stable textual tuple, for example:
+
+    "M2=7|Dmax=3|C4=2|G=0|B=0|Omega=4"
+
+M3_hier_bin can be an integer ID assigned after sorting unique tuples.
+
+M3_hier_rank_score should be used only for plotting/ranking. It must be derived
+from lexicographic order, not from a weighted sum of raw coordinates.
+
+Task 3: Add Bad-Key Recall Metrics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The previous metrics used tail L1 error, top-10% recall, and Spearman
+correlation. Keep them, but add metrics that are more appropriate for sparse
+bad-key tails.
+
+Define bad keys as:
+
+    bad_any:
+        p_H > 0
+
+    bad_high:
+        p_H >= 0.5
+
+    bad_catastrophic:
+        p_H = 1
+
+For each model M0, M1, M2, M3_old, M3_hier compute:
+
+    bad_any_recall_at_highest_bin
+    bad_high_recall_at_highest_bin
+    bad_catastrophic_recall_at_highest_bin
+
+    bad_any_precision_at_highest_bin
+    bad_high_precision_at_highest_bin
+    bad_catastrophic_precision_at_highest_bin
+
+    bad_any_recall_at_top_k
+    bad_high_recall_at_top_k
+    bad_catastrophic_recall_at_top_k
+
+Use:
+
+    k = ceil(0.10 * number_of_keys)
+
+Also compute:
+
+    tail_l1_error
+    Spearman correlation with p_H
+    Kendall correlation with p_H
+    AUC if p_H > 0 is used as a binary label
+    maximum p_H per bin
+    mean p_H per bin
+    key count per bin
+
+Important metric convention:
+
+    Larger model score/rank must mean higher predicted risk.
+
+Before reporting Spearman/Kendall, verify that the sign is correct. The previous
+run appeared to have a possible metric-sign issue.
+
+Task 4: Direct-Bin and Certified-Bin Bounds
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For each model bin, compute:
+
+    p_bin_mean = average p_H in bin
+    p_bin_max  = maximum p_H in bin
+    bin_mass   = number of keys in bin / total keys
+
+For certification-style plots and tables, use p_bin_max as the direct empirical
+upper bound for keys in the bin.
+
+For each model, compute:
+
+    direct average bound:
+        sum_over_bins bin_mass * p_bin_max
+
+    empirical average:
+        average p_H over all keys
+
+    looseness:
+        direct_bound / empirical_average
+        if empirical_average = 0, report NA
+
+    tail bound at thresholds tau:
+        sum of bin_mass for bins with p_bin_max > tau
+
+Use tau grid:
+
+    tau in {0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.99}
+
+Task 5: Static-Key Multi-Query Illustration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For each model's direct-bin certificate, compute:
+
+    Fail_q_bound =
+        sum_over_bins bin_mass * (1 - (1 - p_bin_max)^q)
+
+Compare with empirical:
+
+    Fail_q_empirical =
+        average_over_keys (1 - (1 - p_H)^q)
+
+Compare with average-only union bound:
+
+    q * empirical_average, capped at 1
+
+Use:
+
+    q in {1, 2, 5, 10, 25, 50, 100}
+
+Required output:
+
+    static_key_bounds.csv
+
+Columns:
+
+    run_id
+    model
+    q
+    empirical_fail_q
+    profile_bound_fail_q
+    average_union_bound
+    profile_bound_looseness
+
+Task 6: Same-Key Rerun for t=1
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Rerun the same-key comparison for the existing useful toy setting:
+
+    r = 31
+    d = 5
+    t = 1
+    threshold schedule = 4
+    key_count = 128 or larger if cheap
+
+Important:
+
+    All models must use the same keys and the same error set.
+    Do not run separate split configurations with different key counts.
+
+Required output directory:
+
+    artifacts/diagnostics_samekey_r31_d5_t1_m3hier/
+
+Required output files:
+
+    per_key_profiles.csv
+    per_key_profiles_with_m3_hier.csv
+    model_ranking_summary.csv
+    bin_summary.csv
+    tail_l1_summary.csv
+    bad_key_recall_summary.csv
+    static_key_bounds.csv
+    failure_taxonomy.csv
+    run_metadata.json
+
+Task 7: Exact t=2 Experiment
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the next paper-relevant exact experiment:
+
+    r = 31
+    d = 5
+    t = 2
+    threshold schedule = 4;4;3;3
+    key_count = 128 initially
+
+Reason:
+
+    The diagnostics found this as a non-saturated regime:
+        p_H_mean around 0.140625
+        success_rate around 0.859375
+
+Error count:
+
+    n = 2r = 62
+    |E_t| = binomial(62, 2) = 1891
+
+For 128 keys:
+
+    total decode runs = 128 * 1891 = 242048
+
+This is feasible and much more meaningful than t=1.
+
+Required output directory:
+
+    artifacts/diagnostics_samekey_r31_d5_t2_m3hier/
+
+Required output files:
+
+    per_key_profiles.csv
+    per_key_profiles_with_m3_hier.csv
+    model_ranking_summary.csv
+    bin_summary.csv
+    tail_l1_summary.csv
+    bad_key_recall_summary.csv
+    static_key_bounds.csv
+    failure_taxonomy.csv
+    counter_distributions.csv
+    run_metadata.json
+
+Task 8: Failure Mechanism Table
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For the worst keys in each run, output a detailed table.
+
+Select:
+
+    all keys with p_H > 0 for t=1, if small;
+    top 10 keys by p_H for t=2.
+
+Required output:
+
+    worst_key_mechanisms.csv
+
+Columns:
+
+    run_id
+    key_id
+    p_h
+    failure_count
+    error_count
+    M2_bin
+    M3_hier_tuple
+    Dmax
+    C4_loc
+    near_tail_u1
+    near_tail_u2
+    near_tail_u3
+    near_tail_u4
+    B_fixed_count
+    Omega_max
+    dominant_failure_type
+    timeout_count
+    wrong_zero_count
+    divergence_like_count
+    max_clean_counter
+    explanation_hint
+
+The explanation_hint can be simple:
+    "high M2 overlap"
+    "high Dmax"
+    "fixed-point indicator"
+    "mixed"
+    "unknown"
+
+Task 9: Plots
+~~~~~~~~~~~~~
+
+Generate plots as PNG and PDF.
+
+Required plots:
+
+1. p_H_by_model_rank_M2.png
+    x-axis: model rank or bin
+    y-axis: p_H
+    show M2 ranking
+
+2. p_H_by_model_rank_M3_hier.png
+    same for M3_hier
+
+3. empirical_tail_vs_model_bound.png
+    empirical Pr[p_H > tau] and model tail bounds
+
+4. static_key_fail_q.png
+    q versus empirical Fail_q, profile-bound Fail_q, and q*delta_avg
+
+5. bin_max_vs_bin_mean.png
+    for M2 and M3_hier
+
+6. worst_key_profile_heatmap.png
+    optional, if easy
+
+Experiment Acceptance Criteria
+------------------------------
+
+A result is paper-useful if at least one of the following holds.
+
+Strong success:
+
+    M3_hier preserves M2's bad-key recall and improves at least one of:
+        - tail L1 error;
+        - profile-bound looseness;
+        - static-key bound tightness;
+        - separation inside the highest M2 bin.
+
+Moderate success:
+
+    M3_hier matches M2 and provides better interpretability through structural
+    sub-bins, even if it does not improve numerical error.
+
+Negative but useful:
+
+    M3_hier does not beat M2. In this case, the paper should state that, in the
+    first exact toy regime, the near-codeword/high-overlap coordinate is the
+    dominant profile feature and the remaining coordinates do not improve the
+    predictor. This is still publishable as honest evidence for the framework, but
+    not as evidence that the full profile is always better.
+
+Failure / stop condition:
+
+    If t=2 is saturated again, rerun threshold sweep around:
+        5;4;3;3
+        4;3;3;3
+        4;4;4;3
+        5;5;4;3
+        3;3;3;3
+
+    If t=1 or t=2 results contradict the sanity checks, rerun:
+        zero_error_sanity
+        single_bit_geometry
+        syndrome_update_consistency
+
+Recommended Paper Interpretation
+--------------------------------
+
+If M3_hier succeeds:
+
+    "The full structural profile is useful when used as a hierarchical
+    certificate refinement: the strongest near-codeword/high-overlap coordinate
+    identifies the bad-key tail, while additional dependency coordinates refine
+    the upper bound inside that tail."
+
+If M3_hier only matches M2:
+
+    "The toy experiment shows that the key-conditioned framework exposes a
+    structural tail, and that the dominant coordinate in this regime is the
+    near-codeword/high-overlap feature. This motivates using the full profile as
+    a certificate interface rather than forcing a single scalar score."
+
+If M3_hier fails:
+
+    "The full-profile scalar/binned model is too coarse for the current regime.
+    The paper should keep the theorem framework, but the empirical section should
+    emphasize the simpler M2 tail diagnostic and list profile refinement as an
+    open implementation item."
+
+Docker Execution Requirements
+-----------------------------
+
+All commands should run inside Docker.
+
+Expected commands:
+
+    ./build.sh
+
+Then for t=1:
+
+    docker run --rm \
+        -v "$PWD/artifacts:/workspace/artifacts" \
+        dependency-aware-dfr:stepXX \
+        python -m src.experiments.samekey \
+            --r 31 \
+            --d 5 \
+            --t 1 \
+            --thresholds 4 \
+            --key-count 128 \
+            --models M0,M1,M2,M3_old,M3_hier \
+            --output artifacts/diagnostics_samekey_r31_d5_t1_m3hier
+
+Then for t=2:
+
+    docker run --rm \
+        -v "$PWD/artifacts:/workspace/artifacts" \
+        dependency-aware-dfr:stepXX \
+        python -m src.experiments.samekey \
+            --r 31 \
+            --d 5 \
+            --t 2 \
+            --thresholds 4,4,3,3 \
+            --key-count 128 \
+            --models M0,M1,M2,M3_old,M3_hier \
+            --output artifacts/diagnostics_samekey_r31_d5_t2_m3hier
+
+If the existing CLI differs, adapt the exact module/argument names but preserve
+the configuration and output requirements.
+
+Deliverables
+------------
+
+After implementation, provide a ZIP containing:
+
+    source code
+    Dockerfile
+    build.sh
+    README.md
+    GAP.txt
+    artifacts/diagnostics_samekey_r31_d5_t1_m3hier/
+    artifacts/diagnostics_samekey_r31_d5_t2_m3hier/
+
+Also provide a short summary file:
+
+    artifacts/m3_hier_experiment_summary.md
+
+This summary must answer:
+
+    1. Did M3_hier preserve M2's bad-key recall?
+    2. Did M3_hier improve tail L1 error?
+    3. Did M3_hier improve profile-bound looseness?
+    4. Did M3_hier improve static-key Fail_q bounds?
+    5. Which raw profile coordinates explain the worst keys?
+    6. Is the result strong, moderate, negative-but-useful, or failed?
+
+End of plan.

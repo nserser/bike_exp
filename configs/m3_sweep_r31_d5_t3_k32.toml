@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_sweep_r31_d5_t3_k32"
+seed = 20260511
+
+[parameters]
+r = 31
+d = 5
+t = 3
+key_mode = "sampled_keys"
+key_count = 32
+schedules = [[5, 4, 4, 3], [5, 4, 3, 3], [4, 4, 3, 3], [4, 3, 3, 3], [5, 5, 4, 3], [5, 5, 4, 4, 3], [4, 4, 4, 3, 3]]
+wrong_zero_is_failure = true
+exact_errors = false
+error_sample_count = 5000
+divergence_flip_threshold = 24
+divergence_residual_threshold = 24
+preferred_mean_min = 0.02
+preferred_mean_max = 0.5
+acceptable_mean_min = 0.005
+acceptable_mean_max = 0.7

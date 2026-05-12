@@ -1,0 +1,42 @@
+[run]
+run_id = "exact_toy_r11_d3_t3"
+seed = 20260509
+mode = "exact_full_keyspace"
+output_dir = "artifacts/exact_toy_r11_d3_t3"
+
+[parameters]
+r = 11
+d = 3
+t = 3
+
+[decoder]
+iterations = 5
+thresholds = [2, 2, 2, 2, 2]
+wrong_zero_is_failure = true
+flip_policy = "all_ge_threshold"
+
+[profile]
+u_values = [1, 2, 3]
+gathering_m_max = 3
+gathering_l_max = 3
+fixedpoint_m_max = 3
+fixedpoint_thresholds = [2, 3]
+
+[state]
+models = ["M0", "M1", "M2", "M3"]
+u_bins = [0, 1, 2, 3, 99]
+omega_bins = [0, 1, 2, 4, 8, 99]
+strict_absorbing = false
+
+[binning]
+bin_budgets = [8, 16, 32, 64, 128]
+quantile_ties = "stable"
+
+[sampling]
+key_count = 0
+error_sample_count = 0
+train_fraction = 1.0
+
+[metrics]
+q_values = [1, 10, 100, 1000]
+top_tail_fractions = [0.01, 0.05, 0.10]

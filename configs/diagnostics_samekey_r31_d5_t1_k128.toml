@@ -1,0 +1,24 @@
+[run]
+run_id = "decoder_diagnostics_samekey_r31_d5_t1_k128"
+seed = 20260511
+
+[[cases]]
+name = "samekey_r31_d5_t1_k128"
+r = 31
+d = 5
+key_mode = "sampled_keys"
+key_count = 128
+geometry_key_count = 4
+update_key_count = 4
+distribution_key_count = 4
+baseline_thresholds = [4]
+wrong_zero_is_failure = true
+t_values = [0, 1]
+distribution_t_values = [1]
+sweep_max_iterations = [1]
+sweep_constant_thresholds = [4]
+sweep_schedules = [[4], [4, 4, 4], [4, 4, 4, 4, 4]]
+error_sample_count = 62
+exact_error_weight_max = 1
+divergence_flip_threshold = 20
+divergence_residual_threshold = 20

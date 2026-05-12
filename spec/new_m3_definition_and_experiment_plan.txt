@@ -1,0 +1,796 @@
+New M3 Definition and Experiment Plan
+====================================
+
+Purpose
+-------
+
+This file specifies the next implementation step for the dependency-aware DFR
+paper experiments.
+
+The current experiments show that the original packed/scalar M3 score is not the
+right design. Simple models such as M1 or M2 can be better rank predictors, while
+hierarchical M3 is valuable because it tightens profile-class and static-key
+certificate bounds.
+
+The new design therefore separates M3 into two complementary objects:
+
+    M3_rank:
+        A state-aware structural risk model used to rank keys by predicted
+        failure risk.
+
+    M3_cert:
+        A hierarchical profile partition used to produce tight classwise
+        certificate bounds p_phi^+ and static-key bounds.
+
+The paper story should be:
+
+    Simple structural features identify the high-risk key tail.
+    Dependency-aware hierarchical profile refinement tightens the certified
+    profile-class and static-key bounds.
+
+Do not claim that M3 is always the best scalar predictor. The implementation
+should explicitly measure ranking quality and certificate tightness separately.
+
+High-Level Definitions
+----------------------
+
+Let H be a QC-MDPC key and let p_H be the exact or estimated key-conditioned
+failure probability for a fixed reduced-parameter experiment.
+
+The full revised M3 object is:
+
+    M3(H) = (M3_rank(H), M3_cert(H), M3_counter(H))
+
+where:
+
+    M3_rank(H)
+        is a state-aware, monotone, interpretable risk score or risk tuple.
+
+    M3_cert(H)
+        is a hierarchical profile bin used for classwise upper bounds.
+
+    M3_counter(H)
+        is an optional but strongly recommended counter-certificate feature set
+        directly connected to first-iteration FP/FN behavior and reachable-state
+        certificates.
+
+The implementation may initially implement M3_rank and M3_cert, then add
+M3_counter. However, the final output tables should reserve columns for all
+three.
+
+Important design rule:
+
+    M3 must not be a packed integer or unnormalized weighted sum of unrelated
+    coordinates.
+
+Coordinates must remain inspectable.
+
+Raw Profile Features Required
+-----------------------------
+
+For each key H, output the following raw features whenever available:
+
+    key_id
+    h0_support
+    h1_support
+
+    p_h
+    failure_count
+    error_count
+
+    Dmax
+        Maximum nontrivial column-overlap value.
+
+    C4_loc
+        Local cycle-pressure aggregate.
+
+    Lambda_ge_2_count
+        Number of nontrivial cyclic-overlap entries with D_ab(Delta) >= 2.
+
+    Lambda_ge_3_count
+        Number of nontrivial cyclic-overlap entries with D_ab(Delta) >= 3.
+
+    Lambda_ge_4_count
+        Number of nontrivial cyclic-overlap entries with D_ab(Delta) >= 4,
+        if applicable.
+
+    Lambda_max_count
+        Number of shifts attaining Dmax.
+
+    Omega_max
+        Maximum local weighted-overlap or dirty-overlap budget.
+
+    near_tail_u1
+    near_tail_u2
+    near_tail_u3
+    near_tail_u4
+        Near-codeword/high-overlap tail coordinates.
+
+    G_2_min_syndrome
+    G_2_low_count
+    G_3_min_syndrome
+    G_3_low_count
+        Small gathering statistics, if implemented.
+
+    B_fixed_count
+        Fixed-point or absorbing-state count/proxy.
+
+    max_clean_counter_t1
+        For t=1 or diagnostic single-error runs, the maximum clean-bit counter
+        over all single-bit errors.
+
+    fp0_proxy
+        First-iteration false-positive risk proxy.
+
+    fn0_proxy
+        First-iteration false-negative risk proxy.
+
+    reach_state_count
+        Number of reachable compressed residual states, if computed.
+
+    reach_successor_count
+        Number of reachable support-level successor classes, if computed.
+
+    notes
+        Free-form implementation notes or missing-coordinate markers.
+
+Do not silently omit unavailable features. If a feature is not implemented,
+include the column and set it to empty/NA.
+
+Definition of M3_rank
+---------------------
+
+M3_rank is used for ranking keys from high risk to low risk.
+
+It should be state-aware: the dominant risk coordinate may differ between t=1,
+t=2, and t>=3.
+
+Implement the following initial deterministic rank tuples.
+
+For t = 1:
+
+    M3_rank_tuple_t1(H) =
+        (
+            Dmax_bin(H),
+            Omega_bin(H),
+            max_clean_counter_bin(H),
+            Lambda_ge_3_bin(H),
+            C4_loc_bin(H),
+            B_fixed_bin(H)
+        )
+
+Rationale:
+
+    For single-error decoding, the true error bit has a large counter. Failure
+    is mainly driven by clean bits that also get high counters due to strong
+    local overlap. Therefore worst local overlap and clean-counter risk should
+    dominate.
+
+For t = 2:
+
+    M3_rank_tuple_t2(H) =
+        (
+            C4_loc_bin(H),
+            Lambda_ge_3_bin(H),
+            Dmax_bin(H),
+            Omega_bin(H),
+            fp0_proxy_bin(H),
+            fn0_proxy_bin(H),
+            B_fixed_bin(H)
+        )
+
+Rationale:
+
+    For two-error decoding, aggregate collision/cycle pressure becomes more
+    important because two error columns interact through the syndrome and can
+    create both false positives and missed true bits.
+
+For t >= 3:
+
+    M3_rank_tuple_tge3(H) =
+        (
+            C4_loc_bin(H),
+            fp0_proxy_bin(H),
+            fn0_proxy_bin(H),
+            Omega_bin(H),
+            Dmax_bin(H),
+            near_tail_high_bin(H),
+            B_fixed_bin(H)
+        )
+
+Rationale:
+
+    For larger t, the decoder is more state-dependent. Aggregate counter pressure
+    and first-step FP/FN proxies should be prioritized, while maximum local
+    overlap remains a secondary structural feature.
+
+Ranking convention:
+
+    Larger tuple means higher predicted risk.
+
+If a coordinate is lower-is-risk, transform it before binning so that larger bins
+always mean higher risk.
+
+Rank score:
+
+    M3_rank_score should be derived from lexicographic ordering of the tuple.
+    Do not use arbitrary weighted sums unless a separate normalization and
+    validation step is implemented.
+
+Recommended binning:
+
+    For each coordinate, use quantile bins on the current key sample:
+        0 = lowest risk
+        1 = medium-low risk
+        2 = medium-high risk
+        3 = highest risk
+
+    For discrete features such as Dmax, preserve natural bins:
+        Dmax_bin = Dmax
+
+    Store both raw values and bins.
+
+Definition of M3_cert
+---------------------
+
+M3_cert is not primarily a ranking model. It is a hierarchical profile partition
+used to compute classwise empirical/certified upper bounds.
+
+For each key H, define:
+
+    M3_cert_tuple(H) =
+        (
+            primary_tail_bin(H),
+            syndrome_cycle_bin(H),
+            max_overlap_bin(H),
+            dirty_overlap_bin(H),
+            counter_fp_bin(H),
+            counter_fn_bin(H),
+            absorbing_bin(H)
+        )
+
+Initial choices:
+
+    primary_tail_bin:
+        Use the best-performing simple tail feature for the regime.
+        For t=1, use M2_bin or high-overlap/near-codeword bin.
+        For t=2, use M1_bin or C4/syndrome-pressure bin if it is the strongest
+        observed rank predictor.
+        For t>=3, use whichever first-step FP/FN or cycle-pressure feature is
+        fixed before the run.
+
+    syndrome_cycle_bin:
+        bin(C4_loc)
+
+    max_overlap_bin:
+        bin(Dmax)
+
+    dirty_overlap_bin:
+        bin(Omega_max)
+
+    counter_fp_bin:
+        bin(fp0_proxy)
+
+    counter_fn_bin:
+        bin(fn0_proxy)
+
+    absorbing_bin:
+        bin(B_fixed_count)
+
+Critical rule:
+
+    M3_cert may refine a strong baseline bin, but it should not collapse all
+    information into one scalar. It should be a tuple partition.
+
+For each M3_cert class phi, compute:
+
+    p_phi_mean = mean p_H over keys in class phi
+    p_phi_max  = max p_H over keys in class phi
+    class_mass = number of keys in class phi / total number of keys
+
+For certificate-style bounds, use:
+
+    p_phi^+ = p_phi_max
+
+Then compute:
+
+    delta_profile_bound =
+        sum_phi class_mass(phi) * p_phi^+
+
+    looseness =
+        delta_profile_bound / empirical_delta_avg
+
+For static-key repeated-use bounds:
+
+    Fail_q_profile_bound =
+        sum_phi class_mass(phi) * (1 - (1 - p_phi^+)^q)
+
+Definition of M3_counter
+------------------------
+
+M3_counter is the most theory-aligned feature set. It connects the profile to
+the paper's counter-tail and finite-state certificate story.
+
+For a fixed experiment with error weight t and threshold schedule T:
+
+    fp0_proxy(H):
+        A proxy or exact value for first-iteration false-positive risk.
+
+    fn0_proxy(H):
+        A proxy or exact value for first-iteration false-negative risk.
+
+Suggested exact definitions for small experiments:
+
+    fp0_exact(H):
+        fraction of errors e in E_t for which at least one clean bit j not in e
+        has sigma_j(e) >= T_0 at iteration 0.
+
+    fn0_exact(H):
+        fraction of errors e in E_t for which at least one true bit j in e has
+        sigma_j(e) < T_0 at iteration 0.
+
+Suggested cheaper proxies:
+
+    fp0_proxy(H):
+        maximum or high quantile over clean-bit counters at iteration 0.
+
+    fn0_proxy(H):
+        fraction or count of true-bit counters below threshold at iteration 0.
+
+For t=1 and threshold T=4 with d=5:
+
+    fn0 should usually be zero if geometry is correct.
+    fp0 captures the dangerous mechanism.
+
+For t=2 and threshold schedule 4;4;3;3:
+
+    both fp0 and fn0 can matter.
+
+Required M3_counter outputs:
+
+    fp0_exact_or_proxy
+    fn0_exact_or_proxy
+    fp0_bin
+    fn0_bin
+    max_clean_counter
+    min_true_counter
+    mean_clean_counter
+    mean_true_counter
+
+Implementation Files
+--------------------
+
+Suggested new or modified files:
+
+    src/profiles.py
+        Ensure raw profile coordinates are computed and exported.
+
+    src/m3_models.py
+        Implement M3_rank, M3_cert, and M3_counter.
+
+    src/metrics.py
+        Implement ranking metrics, bad-key recall, profile-bound looseness,
+        and static-key bound looseness.
+
+    src/experiments/samekey.py
+        Run same-key experiments for all models using identical keys and errors.
+
+    src/analysis/m3_summary.py
+        Generate summary tables and plots.
+
+Required output files per run:
+
+    per_key_profiles.csv
+    per_key_m3.csv
+    model_ranking_summary.csv
+    certificate_bound_summary.csv
+    static_key_bounds.csv
+    bad_key_recall_summary.csv
+    bin_summary.csv
+    worst_key_mechanisms.csv
+    failure_taxonomy.csv
+    run_metadata.json
+    experiment_summary.md
+
+Metrics to Compute
+------------------
+
+For each model:
+
+    M0
+    M1
+    M2
+    M3_old
+    M3_rank
+    M3_cert
+    M3_counter, if available
+
+compute:
+
+Ranking metrics:
+
+    Spearman correlation with p_H
+    Kendall correlation with p_H
+    AUC for binary label p_H > 0
+    AUC for top 10 percent p_H label
+    tail L1 error over tau grid
+
+Bad-key metrics:
+
+    bad_any_recall_at_highest_bin
+        bad_any means p_H > 0
+
+    bad_high_recall_at_highest_bin
+        bad_high means p_H >= 0.5 when applicable
+
+    bad_top10_recall
+        recall of the top 10 percent highest-p_H keys
+
+    bad_any_precision_at_highest_bin
+    bad_high_precision_at_highest_bin
+    bad_top10_precision
+
+Certificate metrics:
+
+    empirical_delta_avg
+    direct_profile_bound
+    direct_profile_looseness
+    number_of_bins
+    nonempty_bins
+    max_bin_mass
+    average_bin_mass
+    p_phi_max distribution
+    p_phi_mean distribution
+
+Static-key metrics:
+
+    For q in {1, 2, 5, 10, 25, 50, 100}:
+        empirical_Fail_q
+        profile_bound_Fail_q
+        average_union_bound_min_1
+        profile_bound_looseness
+        improvement_vs_average_union_bound
+
+Tail thresholds:
+
+    tau in {0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.99}
+
+Experiments to Run
+------------------
+
+The current 128-key r=31,d=5 experiments are useful but not enough to fully
+support broad paper claims. The next experiment set should test stability,
+scaling beyond one r, and a harder t.
+
+Experiment A: Replicate t=1 with More Keys
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Purpose:
+
+    Confirm the sparse bad-key tail and test whether M2/M3 behavior is stable.
+
+Parameters:
+
+    r = 31
+    d = 5
+    t = 1
+    thresholds = 4
+    key_count = 512
+    errors_per_key = exact, all binomial(62,1) = 62 errors
+    models = M0, M1, M2, M3_old, M3_rank, M3_cert, M3_counter
+
+Expected use:
+
+    Clean toy demonstration of structural bad-key tail.
+
+Output directory:
+
+    artifacts/m3_new_r31_d5_t1_k512/
+
+Experiment B: Main Exact t=2 Run
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Purpose:
+
+    Main reduced exact experiment. This is the most important run.
+
+Parameters:
+
+    r = 31
+    d = 5
+    t = 2
+    thresholds = 4;4;3;3
+    key_count = 512
+    errors_per_key = exact, all binomial(62,2) = 1891 errors
+    total decodes = 512 * 1891 = 968192
+    models = M0, M1, M2, M3_old, M3_rank, M3_cert, M3_counter
+
+Expected use:
+
+    Main table in the paper. Tests whether M3_cert consistently tightens
+    profile-class and static-key bounds.
+
+Output directory:
+
+    artifacts/m3_new_r31_d5_t2_k512/
+
+Experiment C: Scaling Beyond r=31
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Purpose:
+
+    Show that the result is not specific to r=31.
+
+Preferred parameters:
+
+    r = 47
+    d = 5
+    t = 2
+    thresholds = selected by a small threshold sweep, starting from 4;4;3;3
+    key_count = 256
+    errors_per_key = exact, all binomial(94,2) = 4371 errors
+    total decodes = 256 * 4371 = 1118976
+
+If 4;4;3;3 is saturated or too easy, perform a mini threshold sweep over:
+
+    5;4;3;3
+    4;4;3;3
+    4;3;3;3
+    5;5;4;3
+    3;3;3;3
+
+Select a non-saturated schedule with mean p_H between roughly 0.02 and 0.5.
+
+Output directory:
+
+    artifacts/m3_new_r47_d5_t2_k256/
+
+Experiment D: Harder t=3 Regime
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Purpose:
+
+    Test whether the profile framework remains useful beyond t=1 and t=2.
+
+Parameters:
+
+    r = 31
+    d = 5
+    t = 3
+    thresholds = selected by threshold sweep
+    key_count = 128
+    errors_per_key = exact if feasible, otherwise sampled
+
+Exact error count:
+
+    binomial(62,3) = 37820 errors per key
+    total exact decodes for 128 keys = 4,840,960
+
+If exact is too slow, sample:
+
+    5000 to 10000 errors per key
+
+and report one-sided confidence intervals for p_H.
+
+Threshold sweep candidates:
+
+    5;4;4;3
+    5;4;3;3
+    4;4;3;3
+    4;3;3;3
+    5;5;4;3
+    5;5;4;4;3
+    4;4;4;3;3
+
+Select a non-saturated schedule with mean p_H between roughly 0.02 and 0.7.
+
+Output directory:
+
+    artifacts/m3_new_r31_d5_t3_k128/
+
+Experiment E: Optional d=7 Check
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Purpose:
+
+    Test sensitivity to row weight.
+
+Parameters:
+
+    r = 47
+    d = 7
+    t = 2
+    thresholds = selected by threshold sweep
+    key_count = 128
+    errors_per_key = exact, binomial(94,2) = 4371
+
+This is optional, but useful if time allows.
+
+Output directory:
+
+    artifacts/m3_new_r47_d7_t2_k128/
+
+Threshold Sweep Requirements
+----------------------------
+
+Before running a new parameter set, run a small threshold sweep unless a schedule
+is already validated.
+
+A schedule is acceptable if:
+
+    zero-error pass rate = 1.0
+    single-bit geometry pass rate = 1.0
+    syndrome-update consistency pass rate = 1.0
+    empirical mean p_H is non-saturated
+
+Preferred mean p_H range:
+
+    0.02 <= mean p_H <= 0.5
+
+Acceptable toy/stress range:
+
+    0.005 <= mean p_H <= 0.7
+
+Avoid:
+
+    mean p_H near 0 for all keys
+    mean p_H near 1 for all keys
+
+Minimum run for threshold sweep:
+
+    key_count = 32 or 64
+    exact errors if t <= 2
+    sampled errors if t >= 3
+
+Paper Acceptance Criteria
+-------------------------
+
+The new M3 design strongly supports the paper if the following are observed in
+at least Experiments A, B, and C:
+
+1. Key-conditioned tail exists:
+       p_H varies nontrivially across keys.
+
+2. Structural consistency:
+       worst keys have elevated structural features such as C4_loc, Dmax,
+       Omega_max, fp0_proxy, or fn0_proxy.
+
+3. M3_rank is competitive:
+       It does not need to beat all models, but should have positive Spearman
+       and useful top-tail recall.
+
+4. M3_cert improves certificate tightness:
+       It should reduce direct_profile_looseness compared with M1/M2 or at least
+       compared with the coarsest strong baseline.
+
+5. Static-key bounds improve:
+       M3_cert should reduce Fail_q profile-bound looseness for q in {1,10,100}.
+
+6. M3_old is worse:
+       It is acceptable and useful to show that naive packed full-profile scoring
+       fails. This motivates the new hierarchical design.
+
+Suggested Paper Wording if Successful
+-------------------------------------
+
+Use:
+
+    "The experiments separate two roles of the structural profile. Simple
+    profile coordinates are often strong rank indicators for the high-risk key
+    tail. The full dependency-aware profile is most useful as a hierarchical
+    certificate refinement: it partitions the high-risk region into smaller
+    classes and tightens the resulting average and static-key bounds."
+
+Avoid:
+
+    "M3 is always the best predictor."
+
+Use:
+
+    "M3_cert gives the tightest profile-class upper bounds in the tested reduced
+    regimes."
+
+Avoid:
+
+    "The experiment proves production-parameter DFR."
+
+Use:
+
+    "The experiments are reduced-parameter exact or sampled validations of the
+    certificate framework."
+
+Docker Commands
+---------------
+
+All commands should be Docker-based.
+
+Build:
+
+    ./build.sh
+
+Example run for Experiment A:
+
+    docker run --rm \
+      -v "$PWD/artifacts:/workspace/artifacts" \
+      dependency-aware-dfr:stepXX \
+      python -m src.experiments.samekey \
+        --r 31 \
+        --d 5 \
+        --t 1 \
+        --thresholds 4 \
+        --key-count 512 \
+        --models M0,M1,M2,M3_old,M3_rank,M3_cert,M3_counter \
+        --exact-errors \
+        --output artifacts/m3_new_r31_d5_t1_k512
+
+Example run for Experiment B:
+
+    docker run --rm \
+      -v "$PWD/artifacts:/workspace/artifacts" \
+      dependency-aware-dfr:stepXX \
+      python -m src.experiments.samekey \
+        --r 31 \
+        --d 5 \
+        --t 2 \
+        --thresholds 4,4,3,3 \
+        --key-count 512 \
+        --models M0,M1,M2,M3_old,M3_rank,M3_cert,M3_counter \
+        --exact-errors \
+        --output artifacts/m3_new_r31_d5_t2_k512
+
+Example threshold sweep for Experiment C:
+
+    docker run --rm \
+      -v "$PWD/artifacts:/workspace/artifacts" \
+      dependency-aware-dfr:stepXX \
+      python -m src.experiments.threshold_sweep \
+        --r 47 \
+        --d 5 \
+        --t 2 \
+        --key-count 64 \
+        --schedules "5,4,3,3;4,4,3,3;4,3,3,3;5,5,4,3;3,3,3,3" \
+        --exact-errors \
+        --output artifacts/threshold_sweep_r47_d5_t2
+
+Example run for Experiment C after schedule selection:
+
+    docker run --rm \
+      -v "$PWD/artifacts:/workspace/artifacts" \
+      dependency-aware-dfr:stepXX \
+      python -m src.experiments.samekey \
+        --r 47 \
+        --d 5 \
+        --t 2 \
+        --thresholds SELECTED_SCHEDULE \
+        --key-count 256 \
+        --models M0,M1,M2,M3_old,M3_rank,M3_cert,M3_counter \
+        --exact-errors \
+        --output artifacts/m3_new_r47_d5_t2_k256
+
+If the current CLI differs, adapt names but preserve all required parameters,
+models, and output files.
+
+Final Deliverables
+------------------
+
+After completing the implementation and experiments, produce:
+
+    1. Source ZIP with Dockerfile, build.sh, README.md, and GAP.txt.
+
+    2. Experiment artifact ZIP containing all output directories.
+
+    3. A summary markdown file:
+
+        artifacts/new_m3_experiment_summary.md
+
+The summary must answer:
+
+    - Which feature was the best rank predictor in each regime?
+    - Did M3_rank improve ranking over M1/M2?
+    - Did M3_cert improve direct profile-bound looseness?
+    - Did M3_cert improve static-key Fail_q bounds?
+    - Are worst keys structurally consistent across regimes?
+    - Does the evidence support the current paper claims?
+    - Should the paper claim M3 as predictor, certificate refiner, or both?
+
+End of specification.

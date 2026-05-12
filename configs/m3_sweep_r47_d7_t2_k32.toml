@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_sweep_r47_d7_t2_k32"
+seed = 20260511
+
+[parameters]
+r = 47
+d = 7
+t = 2
+key_mode = "sampled_keys"
+key_count = 32
+schedules = [[5, 4, 3, 3], [4, 4, 3, 3], [4, 3, 3, 3], [5, 5, 4, 3], [3, 3, 3, 3]]
+wrong_zero_is_failure = true
+exact_errors = true
+error_sample_count = 4371
+divergence_flip_threshold = 28
+divergence_residual_threshold = 28
+preferred_mean_min = 0.02
+preferred_mean_max = 0.5
+acceptable_mean_min = 0.005
+acceptable_mean_max = 0.7

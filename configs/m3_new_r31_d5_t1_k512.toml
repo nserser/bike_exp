@@ -1,0 +1,20 @@
+[run]
+run_id = "m3_new_r31_d5_t1_k512"
+seed = 20260511
+
+[parameters]
+r = 31
+d = 5
+t = 1
+key_mode = "sampled_keys"
+key_count = 512
+thresholds = [4]
+wrong_zero_is_failure = true
+exact_errors = true
+error_sample_count = 62
+divergence_flip_threshold = 20
+divergence_residual_threshold = 20
+baseline_bin_budget = 8
+quantile_bin_count = 4
+top_fraction = 0.10
+notes = "Experiment A from new_m3_definition_and_experiment_plan.txt."
